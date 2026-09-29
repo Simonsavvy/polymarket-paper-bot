@@ -1,0 +1,66 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Polymarket Paper Bot</title>
+<style>
+:root{--bg:#f7f7f5;--card:#fff;--ink:#1b1b1a;--mut:#6b6b66;--line:#e4e4df;--pos:#0a7a3d;--neg:#b3261e;--acc:#2b59c3}
+@media(prefers-color-scheme:dark){:root{--bg:#161615;--card:#20201e;--ink:#eeeeea;--mut:#9a9a93;--line:#333330;--pos:#4cc27f;--neg:#f0776f;--acc:#7aa2ff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,Segoe UI,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:20px;margin:0 0 2px}.sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+.banner{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--acc);padding:10px 14px;border-radius:8px;font-size:13px;color:var(--mut);margin-bottom:18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h2{font-size:16px;margin:0 0 10px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.stat .l{font-size:12px;color:var(--mut)}.stat .v{font-size:20px;font-weight:600}
+.pos{color:var(--pos)}.neg{color:var(--neg)}
+svg{width:100%;height:150px;display:block}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:6px 6px;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:500}td.n,th.n{text-align:right}
+.note{font-size:12px;color:var(--mut);margin-top:6px}
+.wide{overflow-x:auto}
+</style></head><body><div class="wrap">
+<h1>Polymarket paper bot</h1><div class="sub" id="sub">loading…</div>
+<div class="banner">Practice mode: imaginary money only. No wallet, no real orders. Rewards are estimates and fills are simulated conservatively, so treat results as a rough filter, not proof of profit.</div>
+<div id="accts"></div>
+<div class="card"><h2>Recent simulated fills</h2><div class="wide"><table id="fills"></table></div></div>
+<div class="card"><h2>Bot activity</h2><div id="log" class="note"></div></div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const usd=(x,d=2)=>(x<0?"-":"")+"$"+Math.abs(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+const sg=(x,d=2)=>(x>=0?"+":"-")+"$"+Math.abs(x).toFixed(d);
+const cls=x=>x>0.00005?"pos":x<-0.00005?"neg":"";
+const esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function chart(series,start){
+  if(series.length<2)return '<div class="note">Chart appears after a few minutes of data.</div>';
+  const W=900,H=150,p=6;const xs=series.map(s=>s[0]),ys=series.map(s=>s[1]).concat([start]);
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+  const yr=(y1-y0)||Math.max(0.01,start*0.0001);
+  const X=t=>p+(t-x0)/((x1-x0)||1)*(W-2*p),Y=v=>H-p-(v-y0)/yr*(H-2*p);
+  const d=series.map((s,i)=>(i?"L":"M")+X(s[0]).toFixed(1)+","+Y(s[1]).toFixed(1)).join(" ");
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line x1="0" x2="${W}" y1="${Y(start)}" y2="${Y(start)}" stroke="var(--line)" stroke-dasharray="4 4"/><path d="${d}" fill="none" stroke="var(--acc)" stroke-width="2" vector-effect="non-scaling-stroke"/></svg><div class="note">Account value over time. Dashed line = starting amount.</div>`;
+}
+async function load(){
+  const d=await (await fetch("https://raw.githubusercontent.com/Simonsavvy/polymarket-paper-bot/data/data.json?t="+Date.now(),{cache:"no-store"})).json();
+  const hrs=d.first?((d.now-d.first)/3600):0;
+  $("#sub").textContent=`Running for ${hrs<1?Math.round(hrs*60)+" min":hrs.toFixed(1)+" hours"} · last bot run ${Math.round((Date.now()/1000-d.now)/60)} min ago · page refreshes every 2 min`;
+  let h="";
+  for(const [name,a] of Object.entries(d.accounts)){
+    const ch=a.equity-a.start,unreal=ch-a.rewards-a.realized;
+    const pct=ch/a.start*100;
+    h+=`<div class="card"><h2>Imaginary account: ${usd(a.start,0)}</h2><div class="stats">
+    <div class="stat"><div class="l">Account value</div><div class="v">${usd(a.equity)}</div></div>
+    <div class="stat"><div class="l">Change</div><div class="v ${cls(ch)}">${sg(ch,3)} (${pct.toFixed(3)}%)</div></div>
+    <div class="stat"><div class="l">Est. rewards</div><div class="v ${cls(a.rewards)}">${sg(a.rewards,3)}</div></div>
+    <div class="stat"><div class="l">Realized trading profit</div><div class="v ${cls(a.realized)}">${sg(a.realized,3)}</div></div>
+    <div class="stat"><div class="l">Open position P&amp;L</div><div class="v ${cls(unreal)}">${sg(unreal,3)}</div></div>
+    <div class="stat"><div class="l">Fills</div><div class="v">${a.nfills}</div></div></div>
+    ${chart(a.series,a.start)}
+    ${a.positions.length?`<div class="wide"><table><tr><th>Market</th><th class="n">Price</th><th class="n">YES / NO held</th><th class="n">Rewards</th></tr>${a.positions.map(p=>`<tr><td>${esc(p.q.slice(0,70))}</td><td class="n">${p.mid==null?"":p.mid.toFixed(3)}</td><td class="n">${p.yes.toFixed(0)} / ${p.no.toFixed(0)}</td><td class="n">${sg(p.rewards,4)}</td></tr>`).join("")}</table></div>`:'<div class="note">No markets quoted by this account yet. If this is the $10 account, that is expected: reward markets need 20+ shares per side.</div>'}
+    </div>`;
+  }
+  $("#accts").innerHTML=h||'<div class="card">No data yet.</div>';
+  $("#fills").innerHTML=d.fills.length?'<tr><th>Time</th><th>Account</th><th>Side</th><th class="n">Size @ price</th><th>Market</th></tr>'+d.fills.map(f=>`<tr><td>${new Date(f.ts*1000).toLocaleString()}</td><td>${esc(f.acct)}</td><td>${f.side}</td><td class="n">${f.size.toFixed(0)} @ ${f.price.toFixed(3)}</td><td>${esc(f.q.slice(0,60))}</td></tr>`).join(""):'<tr><td class="note">No simulated fills yet.</td></tr>';
+  $("#log").innerHTML=d.log.map(l=>new Date(l.ts*1000).toLocaleTimeString()+" — "+esc(l.msg)).join("<br>");
+}
+load();setInterval(load,120000);
+</script></body></html>
